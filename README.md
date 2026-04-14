@@ -14,6 +14,9 @@ surface so the browser-side explorer never has to touch `blpapi` directly.
 | `/intraday/bars` | POST | `IntradayBarRequest` — intraday OHLCV bars |
 | `/instruments/lookup` | POST | `//blp/instruments` ticker search |
 | `/stream` | WS | Real-time `//blp/mktdata` subscriptions |
+| `/sql/query` | POST | Run a parameterised SQL query against the local DB |
+| `/sql/tables` | GET | List tables and views in the local DB |
+| `/sql/tables/{table}` | GET | Describe a table's columns |
 
 All HTTP endpoints auto-render an interactive OpenAPI UI at
 [`/docs`](http://localhost:8000/docs).
@@ -118,6 +121,39 @@ ws.onmessage = (evt) => {
 };
 ```
 
+### Local SQL query
+
+```js
+const res = await fetch("http://localhost:8000/sql/query", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    sql: "SELECT ticker, close FROM prices WHERE ticker = :ticker ORDER BY date DESC LIMIT 100",
+    params: { ticker: "IBM" },
+  }),
+});
+const { columns, rows, truncated } = await res.json();
+// rows is a list of arrays aligned with `columns`
+```
+
+Configure the database via `DATABASE_URL` in `.env` — SQLAlchemy URLs, so
+any supported driver works (SQLite, Postgres, MySQL, MSSQL, DuckDB, …).
+The service is **read-only by default** (`SQL_READ_ONLY=true`), which
+blocks `INSERT / UPDATE / DELETE / DDL` and rejects multi-statement
+payloads. Flip it to `false` when you actually need to write. Results
+are capped at `SQL_MAX_ROWS` and you can request a smaller cap per call
+via `max_rows`.
+
+List / describe tables for an explorer sidebar:
+
+```js
+await fetch("http://localhost:8000/sql/tables").then(r => r.json());
+// → { schema: null, tables: [...], views: [...] }
+
+await fetch("http://localhost:8000/sql/tables/prices").then(r => r.json());
+// → { table: "prices", columns: [{name, type, nullable, ...}] }
+```
+
 ## Auth
 
 If you set `API_KEY` in `.env`, every HTTP call must send the matching
@@ -154,12 +190,16 @@ app/
 │   ├── client.py            # Singleton sync blpapi session
 │   ├── service.py           # High-level Bloomberg operations
 │   └── subscription.py      # Async session + asyncio.Queue bridge
+├── db/
+│   ├── engine.py            # Lazy SQLAlchemy engine
+│   └── service.py           # Query execution + introspection
 └── routers/
     ├── reference.py         # POST /reference
     ├── historical.py        # POST /historical
     ├── intraday.py          # POST /intraday/bars
     ├── instruments.py       # POST /instruments/lookup
-    └── stream.py            # WS   /stream
+    ├── stream.py            # WS   /stream
+    └── sql.py               # POST /sql/query, GET /sql/tables
 ```
 
 ## Notes & gotchas

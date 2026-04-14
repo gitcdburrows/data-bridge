@@ -31,6 +31,11 @@ class Settings(BaseSettings):
         alias="CORS_ORIGINS",
     )
 
+    # Local SQL database
+    database_url: str = Field(default="", alias="DATABASE_URL")
+    sql_read_only: bool = Field(default=True, alias="SQL_READ_ONLY")
+    sql_max_rows: int = Field(default=10_000, alias="SQL_MAX_ROWS")
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_cors(cls, v):

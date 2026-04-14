@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.bloomberg.client import BloombergError, get_client
 from app.config import get_settings
-from app.routers import historical, instruments, intraday, reference, stream
+from app.db.engine import dispose_engine
+from app.routers import historical, instruments, intraday, reference, sql, stream
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         logger.warning("Bloomberg session not available at startup: %s", exc)
     yield
     client.stop()
+    dispose_engine()
 
 
 def create_app() -> FastAPI:
@@ -58,6 +60,7 @@ def create_app() -> FastAPI:
             "status": "ok",
             "version": __version__,
             "bloomberg_connected": bloomberg_up,
+            "database_configured": bool(settings.database_url),
         }
 
     app.include_router(reference.router)
@@ -65,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(intraday.router)
     app.include_router(instruments.router)
     app.include_router(stream.router)
+    app.include_router(sql.router)
 
     return app
 
