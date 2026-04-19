@@ -30,8 +30,8 @@ async def get_historical_data(payload: HistoricalDataRequest) -> HistoricalDataR
             svc.historical_data,
             securities=payload.securities,
             fields=payload.fields,
-            start_date=payload.start_date,
-            end_date=payload.end_date,
+            start_date=payload.start_date,   # already validated YYYYMMDD
+            end_date=payload.end_date,       # already validated YYYYMMDD
             periodicity=payload.periodicity,
             currency=payload.currency,
             non_trading_day_fill_option=payload.non_trading_day_fill_option,

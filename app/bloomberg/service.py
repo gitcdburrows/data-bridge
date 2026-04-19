@@ -3,15 +3,22 @@
 Every method here builds a ``blpapi.Request``, ships it through
 ``BloombergClient.send_request`` and normalises the response into plain
 Python dicts/lists so FastAPI can serialise them to JSON for the JS client.
+
+All date fields (request *and* response) use the canonical ``YYYYMMDD``
+8-digit string format — see :mod:`app.utils.dates`.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.bloomberg.client import BloombergClient, BloombergError, get_client
+from app.utils.dates import (
+    coerce_field_value,
+    safe_to_yyyymmdd,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,8 @@ def _element_to_py(element) -> Any:
     if datatype == blpapi.DataType.BOOL:
         return element.getValueAsBool()
     if datatype == blpapi.DataType.DATE:
-        return element.getValueAsDatetime().date().isoformat()
+        # Canonical YYYYMMDD — downstream Universe Explorer requires it.
+        return element.getValueAsDatetime().date().strftime("%Y%m%d")
     if datatype == blpapi.DataType.DATETIME or datatype == blpapi.DataType.TIME:
         return element.getValueAsDatetime().isoformat()
     try:
@@ -95,8 +103,8 @@ class BloombergService:
         *,
         securities: List[str],
         fields: List[str],
-        start_date: date,
-        end_date: date,
+        start_date: str,
+        end_date: str,
         periodicity: str = "DAILY",
         currency: Optional[str] = None,
         non_trading_day_fill_option: Optional[str] = None,
@@ -104,13 +112,16 @@ class BloombergService:
         max_data_points: Optional[int] = None,
         overrides: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
+        # ``start_date`` / ``end_date`` must already be validated YYYYMMDD
+        # strings (the router enforces this — see ``app/models/schemas.py``
+        # and ``app.utils.dates.parse_yyyymmdd_strict``).
         service = self._client.open_service(REFDATA_SERVICE)
         request = service.createRequest("HistoricalDataRequest")
         _append_all(request.getElement("securities"), securities)
         _append_all(request.getElement("fields"), fields)
         request.set("periodicitySelection", periodicity)
-        request.set("startDate", start_date.strftime("%Y%m%d"))
-        request.set("endDate", end_date.strftime("%Y%m%d"))
+        request.set("startDate", start_date)
+        request.set("endDate", end_date)
         if currency:
             request.set("currency", currency)
         if non_trading_day_fill_option:
@@ -218,7 +229,10 @@ def _parse_reference_data(messages) -> List[Dict[str, Any]]:
                 fd = sec.getElement("fieldData")
                 for j in range(fd.numElements()):
                     child = fd.getElement(j)
-                    entry["fields"][str(child.name())] = _element_to_py(child)
+                    name = str(child.name())
+                    entry["fields"][name] = coerce_field_value(
+                        name, _element_to_py(child)
+                    )
             if sec.hasElement("fieldExceptions"):
                 fx = sec.getElement("fieldExceptions")
                 for j in range(fx.numValues()):
@@ -256,10 +270,14 @@ def _parse_historical_data(messages) -> List[Dict[str, Any]]:
             for j in range(point.numElements()):
                 child = point.getElement(j)
                 name = str(child.name())
+                value = _element_to_py(child)
                 if name == "date":
-                    bar["date"] = _element_to_py(child)
+                    # Historical bar dates are canonicalised to YYYYMMDD; if
+                    # the upstream value is unparseable we emit null rather
+                    # than leak a malformed string to the client.
+                    bar["date"] = safe_to_yyyymmdd(value)
                 else:
-                    bar["fields"][name] = _element_to_py(child)
+                    bar["fields"][name] = coerce_field_value(name, value)
             entry["bars"].append(bar)
         results.append(entry)
     return results

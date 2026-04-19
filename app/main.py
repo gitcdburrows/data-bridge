@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.bloomberg.client import BloombergError, get_client
@@ -51,6 +53,52 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_handler(request: Request, exc: RequestValidationError):
+        # Date-format failures surface as HTTP 400 with a clear message
+        # so the JS client can show a deterministic error. Two shapes
+        # count as a date failure:
+        #   1. Our ``[YYYYMMDD]``-tagged ``value_error`` from a
+        #      ``field_validator`` that invoked ``parse_yyyymmdd_strict``.
+        #   2. A ``string_pattern_mismatch`` against the ``^\d{8}$``
+        #      pattern (the Field-level constraint on ``YyyymmddDate``).
+        # Anything else keeps the standard 422 payload.
+        def _is_date_error(e: dict) -> bool:
+            msg = str(e.get("msg") or "")
+            if "[YYYYMMDD]" in msg:
+                return True
+            ctx = e.get("ctx") or {}
+            if e.get("type") == "string_pattern_mismatch" and (
+                ctx.get("pattern") == r"^\d{8}$"
+            ):
+                return True
+            return False
+
+        if any(_is_date_error(e) for e in exc.errors()):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": (
+                        "Date fields must be YYYYMMDD strings "
+                        "(8 digits, no separators)."
+                    ),
+                    "errors": [
+                        {
+                            "loc": list(e.get("loc", [])),
+                            "msg": str(e.get("msg", "")).replace(
+                                "Value error, ", ""
+                            ),
+                            "input": e.get("input"),
+                        }
+                        for e in exc.errors()
+                    ],
+                },
+            )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+        )
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

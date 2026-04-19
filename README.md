@@ -21,6 +21,64 @@ surface so the browser-side explorer never has to touch `blpapi` directly.
 All HTTP endpoints auto-render an interactive OpenAPI UI at
 [`/docs`](http://localhost:8000/docs).
 
+## Date format contract
+
+**Every date field on the wire — request or response — is an 8-digit
+`YYYYMMDD` string with no separators.** This is the only format the
+Universe Explorer's `plParseDate` (`pipeline/src/parser.js`) guarantees
+to accept; anything else can be misinterpreted locale-to-locale.
+
+- **Requests** — `start_date`, `end_date`, and any date-valued field
+  override (e.g. `ASOF_DATE`, `SETTLE_DT`, `MATURITY`) must be
+  `YYYYMMDD`. Anything else returns **HTTP 400** with a clear
+  `"Date fields must be YYYYMMDD strings"` detail. The full set of
+  recognised bond-date mnemonics lives in `app/utils/dates.py`
+  (`KNOWN_DATE_FIELDS`).
+- **Responses** — every Bloomberg `DATE` scalar is emitted as
+  `YYYYMMDD`. Known bond-date mnemonics are additionally canonicalised
+  at the serialisation boundary even when Bloomberg returns them as
+  `DATETIME` or free-form strings. If an upstream value is
+  unparseable, the field is emitted as `null` rather than leaking a
+  malformed string downstream (the event is logged at WARN).
+- **Intraday datetimes** (bar `time`, `start_datetime`, `end_datetime`)
+  keep ISO 8601 because the time-of-day component is meaningful.
+
+Example of the new contract:
+
+```json
+// Historical request
+{
+  "securities": ["IBM US Equity"],
+  "fields": ["PX_LAST"],
+  "start_date": "20250101",
+  "end_date":   "20250419"
+}
+
+// Historical response (excerpt)
+{
+  "data": [{
+    "security": "IBM US Equity",
+    "bars": [
+      { "date": "20250102", "fields": { "PX_LAST": 220.15 } },
+      { "date": "20250103", "fields": { "PX_LAST": 221.40 } }
+    ]
+  }]
+}
+
+// Reference response for a bond (excerpt)
+{
+  "data": [{
+    "security": "XS1234567890 Corp",
+    "fields": {
+      "PX_LAST":       97.25,
+      "MATURITY":      "20320315",
+      "ISSUE_DT":      "20220315",
+      "FIRST_CPN_DT":  "20220915"
+    }
+  }]
+}
+```
+
 ## Requirements
 
 1. A machine with an **open Bloomberg Terminal** session (`bbcomm` running,
@@ -77,8 +135,8 @@ const res = await fetch("http://localhost:8000/historical", {
   body: JSON.stringify({
     securities: ["SPX Index"],
     fields: ["PX_LAST"],
-    start_date: "2024-01-01",
-    end_date: "2024-12-31",
+    start_date: "20240101",   // YYYYMMDD — required, see "Date format contract"
+    end_date:   "20241231",
     periodicity: "DAILY",
   }),
 });
@@ -185,6 +243,7 @@ app/
 ├── main.py                  # FastAPI app + lifespan (session start/stop)
 ├── config.py                # Settings via pydantic-settings / .env
 ├── security.py              # Optional X-API-Key dependency
+├── utils/dates.py           # YYYYMMDD helpers + bond-date field registry
 ├── models/schemas.py        # Pydantic request / response models
 ├── bloomberg/
 │   ├── client.py            # Singleton sync blpapi session
@@ -213,3 +272,15 @@ app/
 - The bridge intentionally starts the Bloomberg session **lazily** if the
   Terminal isn't reachable yet. `/health` will report
   `bloomberg_connected: false` until the first successful call.
+
+## Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite covers the YYYYMMDD helper, request schemas, response
+serialisation for every bond-date field in `KNOWN_DATE_FIELDS`, and an
+end-to-end check that a non-canonical request date returns HTTP 400. No
+Bloomberg Terminal is required — `tests/conftest.py` stubs `blpapi`.

@@ -1,11 +1,47 @@
-"""Pydantic request/response schemas used by the HTTP API."""
+"""Pydantic request/response schemas used by the HTTP API.
+
+Date contract
+-------------
+Every bond-date field exchanged with the JS client is a canonical
+``YYYYMMDD`` 8-digit string (see :mod:`app.utils.dates`). The
+:data:`YyyymmddDate` annotated type enforces that on request payloads;
+a non-conforming value is surfaced as HTTP 400 by the global
+validation handler in :mod:`app.main`.
+"""
 
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.utils.dates import (
+    InvalidDate,
+    KNOWN_DATE_FIELDS,
+    parse_yyyymmdd_strict,
+    safe_to_yyyymmdd,
+)
+
+
+def _validate_yyyymmdd(value: str) -> str:
+    try:
+        parse_yyyymmdd_strict(value)
+    except InvalidDate as exc:
+        # Tagged so the global RequestValidationError handler in app.main
+        # can map it to HTTP 400 rather than the default 422.
+        raise ValueError(f"[YYYYMMDD] {exc}") from exc
+    return value
+
+
+YyyymmddDate = Annotated[
+    str,
+    Field(
+        pattern=r"^\d{8}$",
+        description="Date as an 8-digit YYYYMMDD string, e.g. '20250419'.",
+        examples=["20250419"],
+    ),
+]
 
 
 # ---------- Reference data ------------------------------------------------
@@ -24,8 +60,27 @@ class ReferenceDataRequest(BaseModel):
     )
     overrides: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Optional field overrides, e.g. {'VWAP_START_TIME': '09:30'}.",
+        description=(
+            "Optional field overrides, e.g. {'VWAP_START_TIME': '09:30'}. "
+            "Values for known date overrides (e.g. ASOF_DATE) must be "
+            "YYYYMMDD strings."
+        ),
     )
+
+    @field_validator("overrides")
+    @classmethod
+    def _validate_date_overrides(cls, v):
+        if not v:
+            return v
+        for key, value in v.items():
+            if key.upper() in KNOWN_DATE_FIELDS:
+                try:
+                    parse_yyyymmdd_strict(value)
+                except InvalidDate as exc:
+                    raise ValueError(
+                        f"[YYYYMMDD] override {key!r}: {exc}"
+                    ) from exc
+        return v
 
 
 class SecurityData(BaseModel):
@@ -33,6 +88,23 @@ class SecurityData(BaseModel):
     fields: Dict[str, Any] = Field(default_factory=dict)
     field_exceptions: Dict[str, str] = Field(default_factory=dict)
     security_error: Optional[str] = None
+
+    @field_validator("fields")
+    @classmethod
+    def _canonicalise_response_dates(cls, v):
+        # Belt-and-braces: coerce known bond-date fields here as well,
+        # so the serialisation contract holds even if a future code path
+        # populates ``fields`` without routing through
+        # ``service.coerce_field_value``.
+        if not v:
+            return v
+        out: Dict[str, Any] = {}
+        for key, value in v.items():
+            if key.upper() in KNOWN_DATE_FIELDS and value is not None:
+                out[key] = safe_to_yyyymmdd(value)
+            else:
+                out[key] = value
+        return out
 
 
 class ReferenceDataResponse(BaseModel):
@@ -45,8 +117,8 @@ class ReferenceDataResponse(BaseModel):
 class HistoricalDataRequest(BaseModel):
     securities: List[str] = Field(..., min_length=1)
     fields: List[str] = Field(..., min_length=1)
-    start_date: date
-    end_date: date
+    start_date: YyyymmddDate
+    end_date: YyyymmddDate
     periodicity: str = Field(
         default="DAILY",
         description="DAILY | WEEKLY | MONTHLY | QUARTERLY | SEMI_ANNUALLY | YEARLY",
@@ -64,10 +136,48 @@ class HistoricalDataRequest(BaseModel):
     max_data_points: Optional[int] = None
     overrides: Optional[Dict[str, Any]] = None
 
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _validate_historical_dates(cls, v: str) -> str:
+        return _validate_yyyymmdd(v)
+
+    @field_validator("overrides")
+    @classmethod
+    def _validate_date_overrides(cls, v):
+        if not v:
+            return v
+        for key, value in v.items():
+            if key.upper() in KNOWN_DATE_FIELDS:
+                try:
+                    parse_yyyymmdd_strict(value)
+                except InvalidDate as exc:
+                    raise ValueError(
+                        f"[YYYYMMDD] override {key!r}: {exc}"
+                    ) from exc
+        return v
+
 
 class HistoricalBar(BaseModel):
-    date: date
+    date: Optional[str] = Field(
+        default=None,
+        pattern=r"^\d{8}$",
+        description="Bar date as YYYYMMDD. Null if the upstream value was unparseable.",
+        examples=["20250419"],
+    )
     fields: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("fields")
+    @classmethod
+    def _canonicalise_bar_dates(cls, v):
+        if not v:
+            return v
+        out: Dict[str, Any] = {}
+        for key, value in v.items():
+            if key.upper() in KNOWN_DATE_FIELDS and value is not None:
+                out[key] = safe_to_yyyymmdd(value)
+            else:
+                out[key] = value
+        return out
 
 
 class HistoricalSecurityData(BaseModel):
