@@ -175,7 +175,36 @@ when it's installed on the build machine. The branded icon in
 An unsigned executable triggers a SmartScreen "unknown publisher" warning on
 first run. Signing removes it. `scripts/build.ps1` calls `scripts/sign.ps1`,
 which **does nothing unless you provide a certificate** — so unsigned builds
-still work. Provide one via environment variables (or parameters):
+still work.
+
+#### Internal distribution to a few known machines (free, self-signed)
+
+If the app only runs on machines you control, you don't need to buy a
+certificate — make Windows trust your own:
+
+```powershell
+# 1. Create a self-signed code-signing cert (once). Writes certs\codesign.pfx
+#    (private, keep secret) and certs\codesign.cer (public, to distribute).
+scripts\new-selfsigned-cert.ps1
+
+# 2. Build + sign with it.
+$env:SIGN_PFX_PATH = "certs\codesign.pfx"
+$env:SIGN_PFX_PASSWORD = "<the password you chose>"
+scripts\build.ps1
+
+# 3. On each target machine, trust the public cert (admin for all-users;
+#    use -Scope CurrentUser for no-admin, current-user-only trust).
+scripts\trust-cert.ps1 -CerPath codesign.cer
+```
+
+After step 3 those machines run the signed `.exe` with no "unknown publisher"
+warning. (`certs\` and `*.pfx` are git-ignored.) The simplest option of all is
+to **not sign** and click *More info → Run anyway* once per machine.
+
+#### Public distribution (a real CA)
+
+For machines you don't control, provide a publicly-trusted certificate via
+environment variables (or parameters):
 
 | Variable | Meaning |
 | --- | --- |

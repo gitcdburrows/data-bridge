@@ -19,3 +19,7 @@ env/
 # PyInstaller build artifacts
 build/
 dist/
+
+# Code-signing material — never commit private keys
+certs/
+*.pfx

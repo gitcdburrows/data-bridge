@@ -77,8 +77,15 @@ try {
     Write-Host "Signing $Path …"
     & $signtool @signArgs
     if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
+
     & $signtool verify /pa /v $Path
-    Write-Host "Signed and verified: $Path" -ForegroundColor Green
+    if ($LASTEXITCODE -ne 0) {
+        # Expected for a self-signed cert that isn't in this machine's Trusted
+        # Root — the file is still signed; trust is established on the targets.
+        Write-Warning "signtool verify failed (exit $LASTEXITCODE) — fine for a self-signed cert not trusted locally. The file is signed."
+    } else {
+        Write-Host "Signed and verified: $Path" -ForegroundColor Green
+    }
 }
 finally {
     if ($tempPfx -and (Test-Path $tempPfx)) { Remove-Item $tempPfx -Force }
