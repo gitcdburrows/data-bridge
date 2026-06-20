@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Imports the public cert (.cer) into the certificate stores so Windows
-    trusts apps signed with it — removing the "unknown publisher" warning and
+    trusts apps signed with it - removing the "unknown publisher" warning and
     letting AV/EDR allowlist by publisher. Run once per target machine.
 
       -Scope LocalMachine  (default) trusts it for all users; needs admin.

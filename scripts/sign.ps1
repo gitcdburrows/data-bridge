@@ -5,7 +5,7 @@
 .DESCRIPTION
     Provide EITHER a PFX (as a base64 string or a file path) OR the thumbprint
     of a certificate already in the user's store. If none is provided the
-    script prints a note and exits 0 — so it is always safe to call from the
+    script prints a note and exits 0 - so it is always safe to call from the
     build (an unsigned binary is still produced).
 
     Signing material is read from parameters or these environment variables:
@@ -16,7 +16,7 @@
       SIGN_TIMESTAMP_URL RFC3161 timestamp server (default: DigiCert)
 
     For locked-down/EV scenarios, point SIGN_THUMBPRINT at a cert backed by a
-    cloud HSM (Azure Trusted Signing, DigiCert KeyLocker, SignPath, …).
+    cloud HSM (Azure Trusted Signing, DigiCert KeyLocker, SignPath, ...).
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -51,7 +51,7 @@ function Find-SignTool {
 
 $hasPfx = $PfxBase64 -or $PfxPath
 if (-not $hasPfx -and -not $Thumbprint) {
-    Write-Host "No signing material (SIGN_PFX_* / SIGN_THUMBPRINT) provided — skipping signing." -ForegroundColor Yellow
+    Write-Host "No signing material (SIGN_PFX_* / SIGN_THUMBPRINT) provided - skipping signing." -ForegroundColor Yellow
     exit 0
 }
 
@@ -74,15 +74,15 @@ try {
     }
     $signArgs += $Path
 
-    Write-Host "Signing $Path …"
+    Write-Host "Signing $Path ..."
     & $signtool @signArgs
     if ($LASTEXITCODE -ne 0) { throw "signtool failed with exit code $LASTEXITCODE" }
 
     & $signtool verify /pa /v $Path
     if ($LASTEXITCODE -ne 0) {
         # Expected for a self-signed cert that isn't in this machine's Trusted
-        # Root — the file is still signed; trust is established on the targets.
-        Write-Warning "signtool verify failed (exit $LASTEXITCODE) — fine for a self-signed cert not trusted locally. The file is signed."
+        # Root - the file is still signed; trust is established on the targets.
+        Write-Warning "signtool verify failed (exit $LASTEXITCODE) - fine for a self-signed cert not trusted locally. The file is signed."
     } else {
         Write-Host "Signed and verified: $Path" -ForegroundColor Green
     }

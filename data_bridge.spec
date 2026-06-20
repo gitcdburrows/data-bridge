@@ -11,7 +11,7 @@ Output: dist/BloombergBridge(.exe)
 
 Several dependencies are imported lazily (blpapi, pystray's platform backend,
 uvicorn's protocol/loop plugins), so PyInstaller's static analysis can miss
-them — they're listed explicitly below.
+them - they're listed explicitly below.
 """
 
 import os
@@ -36,7 +36,7 @@ try:
     binaries += collect_dynamic_libs("blpapi")
     datas += collect_data_files("blpapi")
 except Exception:
-    pass  # blpapi not installed here — build the app without it
+    pass  # blpapi not installed here - build the app without it
 
 hiddenimports = []
 for _pkg in ("uvicorn", "pystray", "pydantic", "pydantic_settings", "app"):
@@ -80,7 +80,7 @@ exe = EXE(
     strip=False,
     upx=False,  # off: avoids AV false positives on locked-down workstations
     runtime_tmpdir=None,
-    console=False,  # tray app — no console window
+    console=False,  # tray app - no console window
     disable_windowed_traceback=False,
     icon=icon_file,
 )

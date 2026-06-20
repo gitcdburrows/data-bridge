@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Bloomberg Data Bridge into a single executable.
 #
-# Note: PyInstaller is not a cross-compiler — run this on the OS you want to
+# Note: PyInstaller is not a cross-compiler - run this on the OS you want to
 # target. For the production Windows workstation use scripts/build.ps1. This
 # script is handy for building/smoke-testing the app on macOS or Linux.
 set -euo pipefail
