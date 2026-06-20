@@ -166,7 +166,9 @@ Bloomberg's package index via `--extra-index-url`), and run
 `pyinstaller data_bridge.spec`. The spec produces a single windowed binary;
 several lazily-imported dependencies (`blpapi`, pystray's backend, uvicorn's
 plugins) are declared explicitly in it, and blpapi's native library is bundled
-when it's installed on the build machine.
+when it's installed on the build machine. The branded icon in
+`assets/icon.ico` is embedded into the binary (regenerate it with
+`python scripts/make_icon.py`).
 
 ### Code signing (optional but recommended)
 
@@ -212,6 +214,23 @@ To cut a release: `git tag v0.2.0 && git push origin v0.2.0`.
 Add signing in CI by setting repo secrets (`SIGN_PFX_BASE64` +
 `SIGN_PFX_PASSWORD`, or `SIGN_THUMBPRINT`); without them the build still
 produces an unsigned `.exe`.
+
+### Azure Trusted Signing in CI
+
+The workflow has a built-in Azure Trusted Signing path (Microsoft's managed,
+cloud-HSM signing — no key material to store, strong SmartScreen reputation).
+Turn it on with a repo **variable** and supply the account details; when the
+variable isn't `true`, CI uses the signtool/PFX path instead.
+
+- Repo **variable**: `AZURE_TRUSTED_SIGNING = true` to enable, plus
+  `AZURE_TS_ENDPOINT` (e.g. `https://eus.codesigning.azure.net/`),
+  `AZURE_TS_ACCOUNT`, `AZURE_TS_PROFILE`.
+- Repo **secrets** (service principal): `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
+  `AZURE_CLIENT_SECRET`.
+
+The service principal needs the **Trusted Signing Certificate Profile Signer**
+role on the signing account. Pin `azure/trusted-signing-action` in the
+workflow to its current release.
 
 ## Running from source (development)
 
@@ -338,14 +357,17 @@ ws.onmessage = (evt) => {
 ```
 run.py                       # entry point: tray supervisor / --serve
 data_bridge.spec             # PyInstaller build spec
+assets/icon.ico              # app icon embedded in the .exe
 scripts/build.ps1|build.sh   # one-command executable builds
 scripts/sign.ps1             # optional Authenticode signing
+scripts/make_icon.py         # regenerate assets/icon.* from app/icon.py
 .github/workflows/build.yml  # CI: test + build/sign/release the .exe
 app/
 ├── main.py                  # FastAPI app, dashboard, /health, /admin/restart
 ├── runner.py                # server ('serve') mode under uvicorn
 ├── supervisor.py            # tray app that supervises the server child
 ├── autostart.py             # per-user 'start on login' (no admin)
+├── icon.py                  # branded icon (tray + .exe), tinted by status
 ├── dashboard.py             # self-contained HTML status page
 ├── logging_config.py        # file logging (survives windowed builds)
 ├── config.py                # Settings via pydantic-settings / .env

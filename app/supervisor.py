@@ -41,12 +41,9 @@ _MAX_BACKOFF_SECONDS = 30
 
 
 def _make_icon(color):
-    from PIL import Image, ImageDraw
+    from app.icon import render_icon
 
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse((8, 8, 56, 56), fill=color)
-    return img
+    return render_icon(64, bg=color)
 
 
 class Supervisor:

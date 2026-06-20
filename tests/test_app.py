@@ -125,3 +125,17 @@ def test_autostart_is_noop_off_windows():
     autostart.disable()  # must not raise
     with pytest.raises(RuntimeError):
         autostart.enable()
+
+
+# ---------------------------------------------------------------------------
+# App icon
+# ---------------------------------------------------------------------------
+
+
+def test_render_icon_produces_rgba_image():
+    pytest.importorskip("PIL")
+    from app.icon import render_icon
+
+    img = render_icon(64)
+    assert img.size == (64, 64)
+    assert img.mode == "RGBA"

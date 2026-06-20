@@ -14,11 +14,19 @@ uvicorn's protocol/loop plugins), so PyInstaller's static analysis can miss
 them — they're listed explicitly below.
 """
 
+import os
+import sys
+
 from PyInstaller.utils.hooks import (
     collect_data_files,
     collect_dynamic_libs,
     collect_submodules,
 )
+
+# Embed the branded icon into the .exe (Windows wants a .ico). Guarded so a
+# missing asset or a non-Windows smoke build doesn't fail.
+_ico = os.path.join("assets", "icon.ico")
+icon_file = _ico if (os.path.exists(_ico) and sys.platform == "win32") else None
 
 # Bundle blpapi's native library when it's installed on the build machine.
 # blpapi is imported lazily, so PyInstaller won't discover its binaries alone.
@@ -74,5 +82,5 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,  # tray app — no console window
     disable_windowed_traceback=False,
-    icon=None,
+    icon=icon_file,
 )
