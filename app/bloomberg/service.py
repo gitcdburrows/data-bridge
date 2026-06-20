@@ -203,6 +203,14 @@ def _append_all(element, values: Iterable[Any]) -> None:
         element.appendValue(v)
 
 
+def _safe_error_message(error_element) -> str:
+    """Pull ``.message`` from a securityError / errorInfo element defensively."""
+    try:
+        return error_element.getElementAsString("message")
+    except Exception:  # noqa: BLE001
+        return "Unknown error"
+
+
 def _parse_reference_data(messages) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for msg in messages:
@@ -214,33 +222,52 @@ def _parse_reference_data(messages) -> List[Dict[str, Any]]:
             continue
         securities_array = msg.getElement("securityData")
         for i in range(securities_array.numValues()):
-            sec = securities_array.getValueAsElement(i)
-            entry: Dict[str, Any] = {
-                "security": sec.getElementAsString("security"),
-                "fields": {},
-                "field_exceptions": {},
-                "security_error": None,
-            }
-            if sec.hasElement("securityError"):
-                entry["security_error"] = sec.getElement("securityError").getElementAsString(
-                    "message"
-                )
-            if sec.hasElement("fieldData"):
-                fd = sec.getElement("fieldData")
-                for j in range(fd.numElements()):
-                    child = fd.getElement(j)
-                    name = str(child.name())
-                    entry["fields"][name] = coerce_field_value(
-                        name, _element_to_py(child)
+            try:
+                sec = securities_array.getValueAsElement(i)
+                entry: Dict[str, Any] = {
+                    "security": (
+                        sec.getElementAsString("security")
+                        if sec.hasElement("security")
+                        else ""
+                    ),
+                    "fields": {},
+                    "field_exceptions": {},
+                    "security_error": None,
+                }
+                if sec.hasElement("securityError"):
+                    entry["security_error"] = _safe_error_message(
+                        sec.getElement("securityError")
                     )
-            if sec.hasElement("fieldExceptions"):
-                fx = sec.getElement("fieldExceptions")
-                for j in range(fx.numValues()):
-                    fe = fx.getValueAsElement(j)
-                    field_id = fe.getElementAsString("fieldId")
-                    info = fe.getElement("errorInfo")
-                    entry["field_exceptions"][field_id] = info.getElementAsString("message")
-            results.append(entry)
+                if sec.hasElement("fieldData"):
+                    fd = sec.getElement("fieldData")
+                    for j in range(fd.numElements()):
+                        child = fd.getElement(j)
+                        name = str(child.name())
+                        try:
+                            entry["fields"][name] = coerce_field_value(
+                                name, _element_to_py(child)
+                            )
+                        except Exception:  # noqa: BLE001 - skip one bad cell
+                            logger.warning(
+                                "Skipping unparseable field %r", name, exc_info=True
+                            )
+                if sec.hasElement("fieldExceptions"):
+                    fx = sec.getElement("fieldExceptions")
+                    for j in range(fx.numValues()):
+                        try:
+                            fe = fx.getValueAsElement(j)
+                            field_id = fe.getElementAsString("fieldId")
+                            entry["field_exceptions"][field_id] = _safe_error_message(
+                                fe.getElement("errorInfo")
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.warning(
+                                "Skipping unparseable fieldException", exc_info=True
+                            )
+                results.append(entry)
+            except Exception:  # noqa: BLE001 - one bad security must not kill the batch
+                logger.warning("Skipping unparseable security block", exc_info=True)
+                continue
     return results
 
 
@@ -253,34 +280,58 @@ def _parse_historical_data(messages) -> List[Dict[str, Any]]:
             )
         if not msg.hasElement("securityData"):
             continue
-        sec = msg.getElement("securityData")
-        entry: Dict[str, Any] = {
-            "security": sec.getElementAsString("security"),
-            "bars": [],
-            "security_error": None,
-        }
-        if sec.hasElement("securityError"):
-            entry["security_error"] = sec.getElement("securityError").getElementAsString(
-                "message"
-            )
-        fd = sec.getElement("fieldData")
-        for i in range(fd.numValues()):
-            point = fd.getValueAsElement(i)
+        try:
+            sec = msg.getElement("securityData")
+            entry: Dict[str, Any] = {
+                "security": (
+                    sec.getElementAsString("security")
+                    if sec.hasElement("security")
+                    else ""
+                ),
+                "bars": [],
+                "security_error": None,
+            }
+            if sec.hasElement("securityError"):
+                entry["security_error"] = _safe_error_message(
+                    sec.getElement("securityError")
+                )
+            # ``fieldData`` is ABSENT when a security errors or returns no data.
+            # Guard it: without this, one bad ticker in a batch raises and 500s
+            # the whole request instead of returning partial data.
+            if sec.hasElement("fieldData"):
+                entry["bars"] = _parse_historical_bars(sec.getElement("fieldData"))
+            results.append(entry)
+        except Exception:  # noqa: BLE001 - one bad security must not kill the batch
+            logger.warning("Skipping unparseable securityData block", exc_info=True)
+            continue
+    return results
+
+
+def _parse_historical_bars(field_data) -> List[Dict[str, Any]]:
+    bars: List[Dict[str, Any]] = []
+    for i in range(field_data.numValues()):
+        try:
+            point = field_data.getValueAsElement(i)
             bar: Dict[str, Any] = {"date": None, "fields": {}}
             for j in range(point.numElements()):
                 child = point.getElement(j)
                 name = str(child.name())
-                value = _element_to_py(child)
+                try:
+                    value = _element_to_py(child)
+                except Exception:  # noqa: BLE001 - skip a single bad cell
+                    logger.warning("Skipping unparseable cell %r", name, exc_info=True)
+                    continue
                 if name == "date":
-                    # Historical bar dates are canonicalised to YYYYMMDD; if
-                    # the upstream value is unparseable we emit null rather
-                    # than leak a malformed string to the client.
+                    # Bar dates are canonicalised to YYYYMMDD; an unparseable
+                    # upstream value is emitted as null, never a raw string.
                     bar["date"] = safe_to_yyyymmdd(value)
                 else:
                     bar["fields"][name] = coerce_field_value(name, value)
-            entry["bars"].append(bar)
-        results.append(entry)
-    return results
+            bars.append(bar)
+        except Exception:  # noqa: BLE001 - skip a single bad bar
+            logger.warning("Skipping unparseable bar %d", i, exc_info=True)
+            continue
+    return bars
 
 
 def _parse_intraday_bars(messages) -> List[Dict[str, Any]]:

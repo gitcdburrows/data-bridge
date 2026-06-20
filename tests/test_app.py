@@ -194,3 +194,165 @@ def test_cors_rejects_unknown_origin(client):
         },
     )
     assert resp.headers.get("access-control-allow-origin") is None
+
+
+# ---------------------------------------------------------------------------
+# Historical parsing: tolerate per-security errors / missing fieldData
+# ---------------------------------------------------------------------------
+
+
+class _FakeEl:
+    """Minimal blpapi.Element stand-in for exercising the response parser."""
+
+    def __init__(self, name="", *, scalar=None, datatype=None, children=None, array=None):
+        self._name = name
+        self._scalar = scalar
+        self._datatype = datatype
+        self._children = children or []
+        self._array = array
+
+    def name(self):
+        return self._name
+
+    def isNull(self):
+        return False
+
+    def isArray(self):
+        return self._array is not None
+
+    def numValues(self):
+        return len(self._array) if self._array is not None else 0
+
+    def getValueAsElement(self, i):
+        return self._array[i]
+
+    def numElements(self):
+        return len(self._children)
+
+    def _find(self, key):
+        for c in self._children:
+            if c._name == key:
+                return c
+        return None
+
+    def hasElement(self, key):
+        return self._find(key) is not None
+
+    def getElement(self, key):
+        if isinstance(key, int):
+            return self._children[key]
+        el = self._find(key)
+        if el is None:
+            raise KeyError(key)  # blpapi raises on a missing element
+        return el
+
+    def getElementAsString(self, key):
+        return str(self.getElement(key)._scalar)
+
+    def datatype(self):
+        return self._datatype
+
+    def getValueAsFloat(self):
+        return float(self._scalar)
+
+    def getValueAsInteger(self):
+        return int(self._scalar)
+
+    def getValueAsBool(self):
+        return bool(self._scalar)
+
+    def getValueAsString(self):
+        return str(self._scalar)
+
+    def getValueAsDatetime(self):
+        return self._scalar
+
+
+def test_parse_historical_tolerates_security_error_without_fielddata():
+    import datetime as dt
+
+    import blpapi  # stubbed by conftest; provides DataType constants
+
+    from app.bloomberg.service import _parse_historical_data
+
+    good = _FakeEl(children=[
+        _FakeEl("securityData", children=[
+            _FakeEl("security", scalar="GOOD US Equity", datatype=blpapi.DataType.STRING),
+            _FakeEl("fieldData", array=[
+                _FakeEl(children=[
+                    _FakeEl("date", scalar=dt.datetime(2025, 1, 2), datatype=blpapi.DataType.DATE),
+                    _FakeEl("PX_LAST", scalar=1.5, datatype=blpapi.DataType.FLOAT64),
+                ]),
+            ]),
+        ]),
+    ])
+    # A security that errored: securityData has securityError and NO fieldData.
+    # The old code did `sec.getElement("fieldData")` unconditionally -> crash.
+    bad = _FakeEl(children=[
+        _FakeEl("securityData", children=[
+            _FakeEl("security", scalar="BAD XYZ", datatype=blpapi.DataType.STRING),
+            _FakeEl("securityError", children=[
+                _FakeEl("message", scalar="Invalid security", datatype=blpapi.DataType.STRING),
+            ]),
+        ]),
+    ])
+
+    rows = _parse_historical_data([good, bad])  # must NOT raise
+
+    by_sec = {r["security"]: r for r in rows}
+    assert by_sec["GOOD US Equity"]["bars"] == [{"date": "20250102", "fields": {"PX_LAST": 1.5}}]
+    assert by_sec["BAD XYZ"]["security_error"] == "Invalid security"
+    assert by_sec["BAD XYZ"]["bars"] == []
+
+
+def test_historical_handler_returns_partial_data(client, monkeypatch):
+    rows = [
+        {"security": "GOOD US Equity", "security_error": None,
+         "bars": [{"date": "20250102", "fields": {"PX_LAST": 1.5}}]},
+        {"security": "BAD XYZ", "security_error": "Invalid security", "bars": []},
+    ]
+
+    class _Svc:
+        def historical_data(self, **_kwargs):
+            return rows
+
+    monkeypatch.setattr("app.routers.historical.BloombergService", lambda: _Svc())
+    resp = client.post(
+        "/historical",
+        json={
+            "securities": ["GOOD US Equity", "BAD XYZ"],
+            "fields": ["PX_LAST", "INDEX_OAS_TSY"],
+            "start_date": "20110620",
+            "end_date": "20260620",
+            "periodicity": "DAILY",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    by_sec = {d["security"]: d for d in resp.json()["data"]}
+    assert by_sec["GOOD US Equity"]["bars"][0]["date"] == "20250102"
+    assert by_sec["BAD XYZ"]["security_error"] == "Invalid security"
+    assert by_sec["BAD XYZ"]["bars"] == []
+
+
+def test_historical_handler_500_carries_detail_and_cors(client, monkeypatch):
+    class _Svc:
+        def historical_data(self, **_kwargs):
+            raise RuntimeError("kaboom")
+
+    monkeypatch.setattr("app.routers.historical.BloombergService", lambda: _Svc())
+    resp = client.post(
+        "/historical",
+        headers={"Origin": PROD_ORIGIN},
+        json={
+            "securities": ["X"],
+            "fields": ["PX_LAST"],
+            "start_date": "20110620",
+            "end_date": "20260620",
+        },
+    )
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["error_type"] == "RuntimeError"
+    assert "kaboom" in body["error"]
+    # The 500 must carry CORS, or the browser only sees "blocked by CORS".
+    assert resp.headers.get("access-control-allow-origin") == PROD_ORIGIN
