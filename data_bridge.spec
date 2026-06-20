@@ -14,7 +14,21 @@ uvicorn's protocol/loop plugins), so PyInstaller's static analysis can miss
 them — they're listed explicitly below.
 """
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
+
+# Bundle blpapi's native library when it's installed on the build machine.
+# blpapi is imported lazily, so PyInstaller won't discover its binaries alone.
+binaries = []
+datas = []
+try:
+    binaries += collect_dynamic_libs("blpapi")
+    datas += collect_data_files("blpapi")
+except Exception:
+    pass  # blpapi not installed here — build the app without it
 
 hiddenimports = []
 for _pkg in ("uvicorn", "pystray", "pydantic", "pydantic_settings", "app"):
@@ -34,8 +48,8 @@ hiddenimports += [
 a = Analysis(
     ["run.py"],
     pathex=["."],
-    binaries=[],
-    datas=[],
+    binaries=binaries,
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

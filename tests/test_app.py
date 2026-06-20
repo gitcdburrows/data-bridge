@@ -8,6 +8,8 @@ required — blpapi is stubbed in conftest and the client is patched out.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -102,3 +104,24 @@ def test_admin_restart_allows_local_origin(client):
         headers={"Origin": "http://localhost:8000"},
     )
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Start-on-login (per-user, Windows-only)
+# ---------------------------------------------------------------------------
+
+
+def test_autostart_support_matches_platform():
+    from app import autostart
+
+    assert autostart.is_supported() == (os.name == "nt")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="checks the non-Windows fallback")
+def test_autostart_is_noop_off_windows():
+    from app import autostart
+
+    assert autostart.is_enabled() is False
+    autostart.disable()  # must not raise
+    with pytest.raises(RuntimeError):
+        autostart.enable()

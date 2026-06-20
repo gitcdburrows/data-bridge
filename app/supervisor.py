@@ -225,16 +225,36 @@ class Supervisor:
     def _build_menu(self):
         from pystray import Menu, MenuItem
 
-        return Menu(
+        from app import autostart
+
+        items = [
             MenuItem(lambda _i: self._status_text(), None, enabled=False),
             MenuItem(lambda _i: self.base_url, None, enabled=False),
             Menu.SEPARATOR,
             MenuItem("Open status page", self._open_dashboard, default=True),
             MenuItem("Open API docs", self._open_docs),
             MenuItem("Restart server", self.restart),
-            Menu.SEPARATOR,
-            MenuItem("Quit", self.quit),
-        )
+        ]
+        if autostart.is_supported():
+            items.append(
+                MenuItem(
+                    "Start on login",
+                    self._toggle_autostart,
+                    checked=lambda _i: autostart.is_enabled(),
+                )
+            )
+        items += [Menu.SEPARATOR, MenuItem("Quit", self.quit)]
+        return Menu(*items)
+
+    def _toggle_autostart(self, icon, _item) -> None:
+        from app import autostart
+
+        try:
+            enabled = autostart.toggle()
+            logger.info("Start-on-login %s", "enabled" if enabled else "disabled")
+        except Exception:
+            logger.exception("Failed to toggle start-on-login")
+        icon.update_menu()
 
     def _refresh(self) -> None:
         if self.icon is None:

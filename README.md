@@ -43,6 +43,9 @@ Bloomberg Terminal.
    - **Open status page** — the dashboard at `http://127.0.0.1:8000/`.
    - **Open API docs** — the OpenAPI UI.
    - **Restart server** — tears the server down and brings a fresh one up.
+   - **Start on login** (Windows) — toggle launching the app automatically at
+     logon. This writes a per-user registry entry, so it needs **no admin /
+     UAC prompt**; it runs in your session alongside the Terminal.
    - **Quit**.
 
 Under the hood the tray process *supervises* the server as a child process,
@@ -162,7 +165,53 @@ Both scripts create a venv, install dev requirements (resolving `blpapi` from
 Bloomberg's package index via `--extra-index-url`), and run
 `pyinstaller data_bridge.spec`. The spec produces a single windowed binary;
 several lazily-imported dependencies (`blpapi`, pystray's backend, uvicorn's
-plugins) are declared explicitly in it.
+plugins) are declared explicitly in it, and blpapi's native library is bundled
+when it's installed on the build machine.
+
+### Code signing (optional but recommended)
+
+An unsigned executable triggers a SmartScreen "unknown publisher" warning on
+first run. Signing removes it. `scripts/build.ps1` calls `scripts/sign.ps1`,
+which **does nothing unless you provide a certificate** — so unsigned builds
+still work. Provide one via environment variables (or parameters):
+
+| Variable | Meaning |
+| --- | --- |
+| `SIGN_PFX_BASE64` | base64 of a `.pfx` (convenient for CI secrets) |
+| `SIGN_PFX_PATH` | path to a `.pfx` on disk (alternative to base64) |
+| `SIGN_PFX_PASSWORD` | password for the `.pfx` |
+| `SIGN_THUMBPRINT` | SHA1 thumbprint of a cert already in the store |
+| `SIGN_TIMESTAMP_URL` | RFC3161 timestamp server (defaults to DigiCert) |
+
+```powershell
+$env:SIGN_PFX_PATH = "C:\certs\codesign.pfx"
+$env:SIGN_PFX_PASSWORD = "•••"
+scripts\build.ps1
+```
+
+You need a real **code-signing certificate** to make this meaningful — a
+standard OV cert, or for the strongest SmartScreen reputation an EV cert. For
+CI, prefer a cloud-HSM-backed option that never exposes key material:
+**Azure Trusted Signing**, **DigiCert KeyLocker**, or **SignPath** (free for
+open source). Point `SIGN_THUMBPRINT` at the cloud-backed cert in those flows.
+
+## Continuous builds (GitHub Actions)
+
+`.github/workflows/build.yml`:
+
+- **`test`** runs the pytest suite on every push / PR (Linux; `blpapi` is
+  stubbed, so no Terminal or vendor SDK needed).
+- **`build`** runs on **tag pushes (`v*`)** and manual *Run workflow*
+  dispatches: it builds the Windows `.exe` (installing `blpapi` from
+  Bloomberg's index so it's bundled), signs it if signing secrets are present,
+  writes a SHA256, uploads it as an artifact, and — for tags — publishes a
+  GitHub **Release** with the `.exe` attached.
+
+To cut a release: `git tag v0.2.0 && git push origin v0.2.0`.
+
+Add signing in CI by setting repo secrets (`SIGN_PFX_BASE64` +
+`SIGN_PFX_PASSWORD`, or `SIGN_THUMBPRINT`); without them the build still
+produces an unsigned `.exe`.
 
 ## Running from source (development)
 
@@ -290,10 +339,13 @@ ws.onmessage = (evt) => {
 run.py                       # entry point: tray supervisor / --serve
 data_bridge.spec             # PyInstaller build spec
 scripts/build.ps1|build.sh   # one-command executable builds
+scripts/sign.ps1             # optional Authenticode signing
+.github/workflows/build.yml  # CI: test + build/sign/release the .exe
 app/
 ├── main.py                  # FastAPI app, dashboard, /health, /admin/restart
 ├── runner.py                # server ('serve') mode under uvicorn
 ├── supervisor.py            # tray app that supervises the server child
+├── autostart.py             # per-user 'start on login' (no admin)
 ├── dashboard.py             # self-contained HTML status page
 ├── logging_config.py        # file logging (survives windowed builds)
 ├── config.py                # Settings via pydantic-settings / .env

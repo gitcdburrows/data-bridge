@@ -19,5 +19,8 @@ pip install --extra-index-url=https://blpapi.bloomberg.com/repository/releases/p
 
 pyinstaller --clean --noconfirm data_bridge.spec
 
+# Optional Authenticode signing — a no-op unless SIGN_* env vars are set.
+& "$PSScriptRoot\sign.ps1" -Path "dist\BloombergBridge.exe"
+
 Write-Host ""
 Write-Host "Built dist\BloombergBridge.exe" -ForegroundColor Green
