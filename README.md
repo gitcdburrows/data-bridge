@@ -118,9 +118,9 @@ Terminal, so it is deliberately simple:
 - **No API key / password.** There is no auth layer to configure.
 - It binds to **`127.0.0.1`** by default, so only the local machine can reach
   it. Change `APP_HOST` only if you understand the exposure.
-- **CORS** restricts which browser origins may call it. The default allows the
-  hosted explorer at `https://universe.thesimplereport.com` plus localhost dev
-  ports.
+- **CORS** restricts which browser origins may call it (never a wildcard). The
+  hosted explorer at `https://universe.thesimplereport.com` and localhost dev
+  ports are always allowed, baked into the build; `CORS_ORIGINS` only adds more.
 - The `/admin/*` control endpoints reject cross-origin browser requests, so a
   remote page can't restart your bridge.
 
@@ -141,7 +141,7 @@ default. To override anything, drop a `.env` file next to the executable
 | `BLOOMBERG_PORT` | `8194` | Terminal / bbcomm port |
 | `APP_HOST` | `127.0.0.1` | Local server bind address |
 | `APP_PORT` | `8000` | Local server port |
-| `CORS_ORIGINS` | hosted explorer + localhost | Allowed browser origins (comma separated) |
+| `CORS_ORIGINS` | (empty) | EXTRA browser origins to allow (comma separated); the explorer + localhost are always allowed |
 
 ## Building the executable
 

@@ -139,3 +139,58 @@ def test_render_icon_produces_rgba_image():
     img = render_icon(64)
     assert img.size == (64, 64)
     assert img.mode == "RGBA"
+
+
+# ---------------------------------------------------------------------------
+# CORS — the Explorer calls cross-origin; preflight must be answered
+# ---------------------------------------------------------------------------
+
+PROD_ORIGIN = "https://universe.thesimplereport.com"
+
+
+def test_cors_preflight_allows_production_origin(client):
+    resp = client.options(
+        "/historical",
+        headers={
+            "Origin": PROD_ORIGIN,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert resp.status_code in (200, 204)
+    assert resp.headers.get("access-control-allow-origin") == PROD_ORIGIN
+    assert "POST" in resp.headers.get("access-control-allow-methods", "")
+
+
+def test_cors_header_present_on_actual_post(client):
+    # Even the 502 from the stubbed Terminal must carry ACAO, or the browser
+    # blocks the Explorer from reading the response.
+    resp = client.post(
+        "/reference",
+        headers={"Origin": PROD_ORIGIN, "Content-Type": "application/json"},
+        json={"securities": ["IBM US Equity"], "fields": ["PX_LAST"]},
+    )
+    assert resp.headers.get("access-control-allow-origin") == PROD_ORIGIN
+
+
+def test_cors_localhost_dev_origin_allowed(client):
+    resp = client.options(
+        "/reference",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"
+
+
+def test_cors_rejects_unknown_origin(client):
+    # Not a wildcard: a site that isn't allow-listed gets no ACAO header.
+    resp = client.options(
+        "/historical",
+        headers={
+            "Origin": "https://evil.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp.headers.get("access-control-allow-origin") is None

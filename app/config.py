@@ -29,6 +29,18 @@ def _env_file_path() -> str:
     return ".env"
 
 
+# Browser origins always allowed, baked into the build so the packaged .exe
+# works with no config or .env. CORS_ORIGINS (env) only ADDS to this list —
+# it can never drop these, so the Explorer's origins can't be lost by a
+# partial/stale config.
+DEFAULT_CORS_ORIGINS = [
+    "https://universe.thesimplereport.com",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+]
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_env_file_path(),
@@ -44,24 +56,28 @@ class Settings(BaseSettings):
     app_host: str = Field(default="127.0.0.1", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
 
-    # Origins allowed to call the bridge from a browser. The Universe Studio
-    # explorer is hosted at https://universe.thesimplereport.com; the
-    # localhost entries keep local explorer development working out of the box.
+    # Origins allowed to call the bridge from a browser. DEFAULT_CORS_ORIGINS
+    # are ALWAYS allowed (so the packaged .exe needs no config); setting
+    # CORS_ORIGINS (comma-separated) ADDS extra origins for unpackaged runs.
     cors_origins: List[str] = Field(
-        default_factory=lambda: [
-            "https://universe.thesimplereport.com",
-            "http://localhost:5173",
-            "http://localhost:3000",
-        ],
+        default_factory=lambda: list(DEFAULT_CORS_ORIGINS),
         alias="CORS_ORIGINS",
     )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def _split_cors(cls, v):
+    def _merge_cors_origins(cls, v):
         if isinstance(v, str):
-            return [o.strip() for o in v.split(",") if o.strip()]
-        return v
+            provided = [o.strip() for o in v.split(",") if o.strip()]
+        elif isinstance(v, (list, tuple)):
+            provided = [str(o).strip() for o in v if str(o).strip()]
+        else:
+            provided = []
+        merged: List[str] = []
+        for origin in [*DEFAULT_CORS_ORIGINS, *provided]:
+            if origin not in merged:
+                merged.append(origin)
+        return merged
 
 
 @lru_cache(maxsize=1)

@@ -69,11 +69,14 @@ def create_app() -> FastAPI:
     app.state.server = None
     app.state.restart_requested = False
 
+    # Explicit allow-list only (never "*"): this bridge can read Bloomberg
+    # data, so a wildcard would let any site the user visits call it. The
+    # Explorer sends no cookies, so credentials aren't needed.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
 
