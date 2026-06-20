@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from app.bloomberg.client import BloombergError
 from app.bloomberg.service import BloombergService
 from app.models.schemas import IntradayBar, IntradayBarRequest, IntradayBarResponse
-from app.security import require_api_key
 
-router = APIRouter(
-    prefix="/intraday",
-    tags=["intraday"],
-    dependencies=[Depends(require_api_key)],
-)
+router = APIRouter(prefix="/intraday", tags=["intraday"])
 
 
 @router.post("/bars", response_model=IntradayBarResponse)

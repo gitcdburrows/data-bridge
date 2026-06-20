@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from app.bloomberg.client import BloombergError
@@ -13,13 +13,8 @@ from app.models.schemas import (
     HistoricalDataResponse,
     HistoricalSecurityData,
 )
-from app.security import require_api_key
 
-router = APIRouter(
-    prefix="/historical",
-    tags=["historical"],
-    dependencies=[Depends(require_api_key)],
-)
+router = APIRouter(prefix="/historical", tags=["historical"])
 
 
 @router.post("", response_model=HistoricalDataResponse)

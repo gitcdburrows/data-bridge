@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app import __version__
 from app.bloomberg.client import BloombergError, get_client
 from app.config import get_settings
-from app.db.engine import dispose_engine
-from app.routers import historical, instruments, intraday, reference, sql, stream
+from app.dashboard import DASHBOARD_HTML
+from app.routers import historical, instruments, intraday, reference, stream
 
 logger = logging.getLogger(__name__)
+
+# Hosts allowed to call the local-only /admin endpoints from a browser.
+# Anything else (e.g. the hosted explorer origin) is rejected so a remote
+# page can't restart the bridge via a cross-site request.
+_LOCAL_ADMIN_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 @asynccontextmanager
@@ -31,7 +38,19 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         logger.warning("Bloomberg session not available at startup: %s", exc)
     yield
     client.stop()
-    dispose_engine()
+
+
+def _require_local_origin(origin: str | None = Header(default=None)) -> None:
+    """Reject browser calls to /admin/* from non-local origins.
+
+    Requests without an ``Origin`` header (curl, the tray supervisor, etc.)
+    are allowed; a browser request only carries one cross-origin.
+    """
+    if origin is None:
+        return
+    host = urlsplit(origin).hostname
+    if host not in _LOCAL_ADMIN_HOSTS:
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only.")
 
 
 def create_app() -> FastAPI:
@@ -45,6 +64,10 @@ def create_app() -> FastAPI:
         ),
         lifespan=lifespan,
     )
+    app.state.started_at = time.time()
+    # Set by the runner so /admin/restart can ask uvicorn to exit cleanly.
+    app.state.server = None
+    app.state.restart_requested = False
 
     app.add_middleware(
         CORSMiddleware,
@@ -100,6 +123,10 @@ def create_app() -> FastAPI:
             content={"detail": exc.errors()},
         )
 
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def dashboard() -> str:
+        return DASHBOARD_HTML
+
     @app.get("/health", tags=["meta"])
     async def health() -> dict:
         client = get_client()
@@ -108,7 +135,26 @@ def create_app() -> FastAPI:
             "status": "ok",
             "version": __version__,
             "bloomberg_connected": bloomberg_up,
-            "database_configured": bool(settings.database_url),
+            "uptime_seconds": round(time.time() - app.state.started_at, 1),
+        }
+
+    @app.post("/admin/restart", tags=["meta"])
+    async def restart(_: None = Depends(_require_local_origin)) -> dict:
+        """Ask the supervisor to restart the server process.
+
+        Sets a flag and asks uvicorn to exit cleanly; the supervising
+        process sees the restart exit code and respawns a fresh server.
+        Without a supervisor (e.g. ``uvicorn app.main:app``) this simply
+        shuts the process down.
+        """
+        app.state.restart_requested = True
+        server = app.state.server
+        if server is not None:
+            server.should_exit = True
+            return {"status": "restarting"}
+        return {
+            "status": "unsupported",
+            "detail": "No supervisor attached; restart the process manually.",
         }
 
     app.include_router(reference.router)
@@ -116,7 +162,6 @@ def create_app() -> FastAPI:
     app.include_router(intraday.router)
     app.include_router(instruments.router)
     app.include_router(stream.router)
-    app.include_router(sql.router)
 
     return app
 
@@ -125,12 +170,6 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    import uvicorn
+    from app.runner import run_server
 
-    settings = get_settings()
-    uvicorn.run(
-        "app.main:app",
-        host=settings.app_host,
-        port=settings.app_port,
-        reload=settings.app_reload,
-    )
+    run_server()

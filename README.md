@@ -1,25 +1,53 @@
 # Universe Studio ↔ Bloomberg Data Bridge
 
-A FastAPI service that bridges the **Universe Studio** JavaScript explorer
-to the **Bloomberg Terminal API** (`blpapi`). It exposes a tidy JSON + WebSocket
-surface so the browser-side explorer never has to touch `blpapi` directly.
+A small desktop app that bridges the **Universe Studio** JavaScript explorer
+to the **Bloomberg Terminal API** (`blpapi`). It runs a local FastAPI service
+exposing a tidy JSON + WebSocket surface so the browser-side explorer never
+has to touch `blpapi` directly.
+
+It ships as a **single self-contained executable with a tray UI** — no Python
+environment, no `pip install`, nothing to configure. Double-click it and a
+tray icon shows the live status and lets you restart the server.
 
 ## What you get
 
 | Endpoint | Method | What it does |
 | --- | --- | --- |
-| `/health` | GET | Liveness + Bloomberg session status |
 | `/reference` | POST | `ReferenceDataRequest` — point-in-time fields |
 | `/historical` | POST | `HistoricalDataRequest` — end-of-period time series |
 | `/intraday/bars` | POST | `IntradayBarRequest` — intraday OHLCV bars |
 | `/instruments/lookup` | POST | `//blp/instruments` ticker search |
 | `/stream` | WS | Real-time `//blp/mktdata` subscriptions |
-| `/sql/query` | POST | Run a parameterised SQL query against the local DB |
-| `/sql/tables` | GET | List tables and views in the local DB |
-| `/sql/tables/{table}` | GET | Describe a table's columns |
 
-All HTTP endpoints auto-render an interactive OpenAPI UI at
-[`/docs`](http://localhost:8000/docs).
+Plus a few meta/control endpoints:
+
+| Endpoint | Method | What it does |
+| --- | --- | --- |
+| `/` | GET | HTML status dashboard (Bloomberg connection, uptime, restart) |
+| `/health` | GET | Liveness + Bloomberg session status (JSON) |
+| `/docs` | GET | Interactive OpenAPI UI |
+| `/admin/restart` | POST | Ask the supervisor to restart the server (local-only) |
+
+## Run it as an app (no Python needed)
+
+This is the intended way to run the bridge on the workstation that hosts the
+Bloomberg Terminal.
+
+1. Get `BloombergBridge.exe` (see **Building the executable** below).
+2. Double-click it. A tray icon appears.
+   - **Green** — server up, Bloomberg Terminal connected.
+   - **Amber** — server up, Terminal not connected yet.
+   - **Grey** — starting / restarting.
+   - **Red** — server stopped (it auto-retries).
+3. Right-click the tray icon for the menu:
+   - **Open status page** — the dashboard at `http://127.0.0.1:8000/`.
+   - **Open API docs** — the OpenAPI UI.
+   - **Restart server** — tears the server down and brings a fresh one up.
+   - **Quit**.
+
+Under the hood the tray process *supervises* the server as a child process,
+so restarts are clean and a crashed server is automatically respawned (with
+backoff). Logs are written to `data-bridge.log` next to the executable.
 
 ## Date format contract
 
@@ -43,7 +71,7 @@ to accept; anything else can be misinterpreted locale-to-locale.
 - **Intraday datetimes** (bar `time`, `start_datetime`, `end_datetime`)
   keep ISO 8601 because the time-of-day component is meaningful.
 
-Example of the new contract:
+Example of the contract:
 
 ```json
 // Historical request
@@ -79,35 +107,83 @@ Example of the new contract:
 }
 ```
 
-## Requirements
+## Security model
 
-1. A machine with an **open Bloomberg Terminal** session (`bbcomm` running,
-   default port `8194`). The bridge must run where the Terminal runs
-   — usually your workstation.
-2. Python 3.10+.
-3. The Bloomberg Python SDK. It is **not** on PyPI. Install it from
-   Bloomberg's package index:
+The bridge is built to run on a single workstation alongside the Bloomberg
+Terminal, so it is deliberately simple:
 
-   ```bash
-   pip install \
-     --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ \
-     blpapi
-   ```
+- **No API key / password.** There is no auth layer to configure.
+- It binds to **`127.0.0.1`** by default, so only the local machine can reach
+  it. Change `APP_HOST` only if you understand the exposure.
+- **CORS** restricts which browser origins may call it. The default allows the
+  hosted explorer at `https://universe.thesimplereport.com` plus localhost dev
+  ports.
+- The `/admin/*` control endpoints reject cross-origin browser requests, so a
+  remote page can't restart your bridge.
 
-## Install & run
+> Note: a page served over **https** (the hosted explorer) calling
+> **http://127.0.0.1** is a mixed-content / cross-origin case. Browsers
+> special-case `localhost`, so it generally works, but verify it in your
+> target browser once deployed.
+
+## Configuration
+
+The app runs with **zero configuration** — every setting has a sensible
+default. To override anything, drop a `.env` file next to the executable
+(or in the project root when running from source). See `.env.example`:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BLOOMBERG_HOST` | `localhost` | Terminal / bbcomm host |
+| `BLOOMBERG_PORT` | `8194` | Terminal / bbcomm port |
+| `APP_HOST` | `127.0.0.1` | Local server bind address |
+| `APP_PORT` | `8000` | Local server port |
+| `CORS_ORIGINS` | hosted explorer + localhost | Allowed browser origins (comma separated) |
+
+## Building the executable
+
+PyInstaller is **not** a cross-compiler — build on the OS you target. For the
+production Windows workstation, run on that machine so `blpapi` is installed
+and gets bundled into the `.exe`:
+
+```powershell
+# Windows (PowerShell), from the repo root:
+scripts\build.ps1
+# → dist\BloombergBridge.exe
+```
+
+```bash
+# macOS/Linux (handy for smoke-testing the app build):
+scripts/build.sh
+# → dist/BloombergBridge
+```
+
+Both scripts create a venv, install dev requirements (resolving `blpapi` from
+Bloomberg's package index via `--extra-index-url`), and run
+`pyinstaller data_bridge.spec`. The spec produces a single windowed binary;
+several lazily-imported dependencies (`blpapi`, pystray's backend, uvicorn's
+plugins) are declared explicitly in it.
+
+## Running from source (development)
+
+Requires **Python 3.10+** and, to actually reach Bloomberg, the vendor
+`blpapi` SDK (not on PyPI):
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate                # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                 # then edit as needed
-python -m app.main                   # or: uvicorn app.main:app --reload
+pip install --extra-index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ blpapi
+
+cp .env.example .env                      # optional — defaults are fine
+
+python run.py                             # tray app (supervisor + server)
+python run.py --serve                     # just the server, no tray
+uvicorn app.main:app --reload             # server with autoreload (dev)
 ```
 
 By default the server listens on `http://127.0.0.1:8000` and expects the
-Terminal on `localhost:8194`. The `CORS_ORIGINS` env var controls which
-origins the JS explorer can call from; set it to your Universe Studio dev
-URL(s).
+Terminal on `localhost:8194`.
 
 ## Calling it from Universe Studio (JavaScript)
 
@@ -179,46 +255,6 @@ ws.onmessage = (evt) => {
 };
 ```
 
-### Local SQL query
-
-```js
-const res = await fetch("http://localhost:8000/sql/query", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    sql: "SELECT ticker, close FROM prices WHERE ticker = :ticker ORDER BY date DESC LIMIT 100",
-    params: { ticker: "IBM" },
-  }),
-});
-const { columns, rows, truncated } = await res.json();
-// rows is a list of arrays aligned with `columns`
-```
-
-Configure the database via `DATABASE_URL` in `.env` — SQLAlchemy URLs, so
-any supported driver works (SQLite, Postgres, MySQL, MSSQL, DuckDB, …).
-The service is **read-only by default** (`SQL_READ_ONLY=true`), which
-blocks `INSERT / UPDATE / DELETE / DDL` and rejects multi-statement
-payloads. Flip it to `false` when you actually need to write. Results
-are capped at `SQL_MAX_ROWS` and you can request a smaller cap per call
-via `max_rows`.
-
-List / describe tables for an explorer sidebar:
-
-```js
-await fetch("http://localhost:8000/sql/tables").then(r => r.json());
-// → { schema: null, tables: [...], views: [...] }
-
-await fetch("http://localhost:8000/sql/tables/prices").then(r => r.json());
-// → { table: "prices", columns: [{name, type, nullable, ...}] }
-```
-
-## Auth
-
-If you set `API_KEY` in `.env`, every HTTP call must send the matching
-`X-API-Key` header, and the WebSocket must be opened with
-`ws://.../stream?api_key=<key>`. Leave `API_KEY` blank to disable the check
-(fine for a workstation-only dev setup).
-
 ## How the bridge talks to Bloomberg
 
 - `app/bloomberg/client.py` maintains a **single long-lived synchronous
@@ -236,42 +272,56 @@ If you set `API_KEY` in `.env`, every HTTP call must send the matching
   pool via `fastapi.concurrency.run_in_threadpool`, keeping the event
   loop responsive.
 
+## How the app is supervised
+
+- `run.py` is the single entry point. With no arguments it launches the tray
+  supervisor; with `--serve` it runs the FastAPI server.
+- `app/supervisor.py` is the tray app. It spawns the server as a child
+  process (`run.py --serve` / the same `.exe --serve` when frozen), polls
+  `/health` to drive the icon colour, and offers Restart/Quit.
+- A restart (tray menu **or** the dashboard button → `POST /admin/restart`)
+  asks uvicorn to exit cleanly with a sentinel code; the supervisor sees it
+  and respawns. Unexpected exits are treated as crashes and retried with
+  backoff.
+
 ## Project layout
 
 ```
+run.py                       # entry point: tray supervisor / --serve
+data_bridge.spec             # PyInstaller build spec
+scripts/build.ps1|build.sh   # one-command executable builds
 app/
-├── main.py                  # FastAPI app + lifespan (session start/stop)
+├── main.py                  # FastAPI app, dashboard, /health, /admin/restart
+├── runner.py                # server ('serve') mode under uvicorn
+├── supervisor.py            # tray app that supervises the server child
+├── dashboard.py             # self-contained HTML status page
+├── logging_config.py        # file logging (survives windowed builds)
 ├── config.py                # Settings via pydantic-settings / .env
-├── security.py              # Optional X-API-Key dependency
 ├── utils/dates.py           # YYYYMMDD helpers + bond-date field registry
 ├── models/schemas.py        # Pydantic request / response models
 ├── bloomberg/
 │   ├── client.py            # Singleton sync blpapi session
 │   ├── service.py           # High-level Bloomberg operations
 │   └── subscription.py      # Async session + asyncio.Queue bridge
-├── db/
-│   ├── engine.py            # Lazy SQLAlchemy engine
-│   └── service.py           # Query execution + introspection
 └── routers/
     ├── reference.py         # POST /reference
     ├── historical.py        # POST /historical
     ├── intraday.py          # POST /intraday/bars
     ├── instruments.py       # POST /instruments/lookup
-    ├── stream.py            # WS   /stream
-    └── sql.py               # POST /sql/query, GET /sql/tables
+    └── stream.py            # WS   /stream
 ```
 
 ## Notes & gotchas
 
-- Bloomberg's `blpapi` is vendor-shipped, not on PyPI — `pip install -r
-  requirements.txt` will only succeed if you also add Bloomberg's index URL
-  (see *Requirements*), or install `blpapi` separately.
+- Bloomberg's `blpapi` is vendor-shipped, not on PyPI — installing it needs
+  Bloomberg's index URL (see *Running from source*). Build the executable on a
+  machine that has it so it gets bundled.
 - `DAPI` terminal-bound entitlements mean this bridge must run on the same
   workstation as the live Bloomberg Terminal session. Hosting it on a
   shared server requires a B-PIPE entitlement instead.
 - The bridge intentionally starts the Bloomberg session **lazily** if the
-  Terminal isn't reachable yet. `/health` will report
-  `bloomberg_connected: false` until the first successful call.
+  Terminal isn't reachable yet. `/health` reports `bloomberg_connected: false`
+  (and the tray icon goes amber) until the first successful call.
 
 ## Running the tests
 
@@ -281,6 +331,8 @@ pytest
 ```
 
 The suite covers the YYYYMMDD helper, request schemas, response
-serialisation for every bond-date field in `KNOWN_DATE_FIELDS`, and an
-end-to-end check that a non-canonical request date returns HTTP 400. No
-Bloomberg Terminal is required — `tests/conftest.py` stubs `blpapi`.
+serialisation for every bond-date field in `KNOWN_DATE_FIELDS`, the end-to-end
+HTTP 400 on a non-canonical request date, and the app surface (status
+dashboard, trimmed `/health`, the local-only admin guard, and that auth and
+SQL are gone). No Bloomberg Terminal is required — `tests/conftest.py` stubs
+`blpapi`.

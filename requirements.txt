@@ -3,7 +3,11 @@ uvicorn[standard]==0.32.0
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
-SQLAlchemy==2.0.36
+
+# Tray app (the packaged executable's UI).
+pystray==0.19.5
+Pillow==10.4.0
+
 # Bloomberg Python API - install from Bloomberg's index:
-#   pip install --index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ blpapi
+#   pip install --extra-index-url=https://blpapi.bloomberg.com/repository/releases/python/simple/ blpapi
 blpapi==3.24.6

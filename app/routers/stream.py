@@ -12,9 +12,6 @@ Protocol (JSON messages):
 
     server  ->  client : {"type": "status", ...}
     server  ->  client : {"type": "error", "detail": "..."}
-
-Authentication: if API_KEY is configured, the client must open the socket
-with ``?api_key=<key>`` in the query string.
 """
 
 from __future__ import annotations
@@ -22,11 +19,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.bloomberg.client import BloombergError
 from app.bloomberg.subscription import SubscriptionStream
-from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +31,6 @@ router = APIRouter(tags=["stream"])
 
 @router.websocket("/stream")
 async def stream(websocket: WebSocket) -> None:
-    settings = get_settings()
-    if settings.api_key:
-        provided = websocket.query_params.get("api_key")
-        if provided != settings.api_key:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-
     await websocket.accept()
     loop = asyncio.get_running_loop()
     stream_handle = SubscriptionStream(loop)

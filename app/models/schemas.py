@@ -249,53 +249,6 @@ class InstrumentLookupResponse(BaseModel):
     matches: List[InstrumentMatch]
 
 
-# ---------- Local SQL -----------------------------------------------------
-
-
-class SQLQueryRequest(BaseModel):
-    sql: str = Field(..., min_length=1, description="SQL statement to execute.")
-    params: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Named bind parameters, e.g. {'ticker': 'IBM'} for `:ticker`.",
-    )
-    max_rows: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Per-request row cap. Clamped by server's SQL_MAX_ROWS.",
-    )
-
-
-class SQLQueryResponse(BaseModel):
-    columns: List[str]
-    rows: List[List[Any]]
-    row_count: int
-    truncated: bool
-
-
-class SQLTableList(BaseModel):
-    schema_name: Optional[str] = Field(default=None, alias="schema")
-    tables: List[str]
-    views: List[str]
-
-    model_config = {"populate_by_name": True}
-
-
-class SQLColumnInfo(BaseModel):
-    name: str
-    type: str
-    nullable: bool
-    default: Any = None
-    primary_key: bool
-
-
-class SQLTableSchema(BaseModel):
-    schema_name: Optional[str] = Field(default=None, alias="schema")
-    table: str
-    columns: List[SQLColumnInfo]
-
-    model_config = {"populate_by_name": True}
-
-
 # ---------- Errors --------------------------------------------------------
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
 from app.bloomberg.client import BloombergError
@@ -12,13 +12,8 @@ from app.models.schemas import (
     InstrumentLookupResponse,
     InstrumentMatch,
 )
-from app.security import require_api_key
 
-router = APIRouter(
-    prefix="/instruments",
-    tags=["instruments"],
-    dependencies=[Depends(require_api_key)],
-)
+router = APIRouter(prefix="/instruments", tags=["instruments"])
 
 
 @router.post("/lookup", response_model=InstrumentLookupResponse)
