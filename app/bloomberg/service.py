@@ -57,7 +57,13 @@ def _element_to_py(element) -> Any:
         return element.getValueAsBool()
     if datatype == blpapi.DataType.DATE:
         # Canonical YYYYMMDD — downstream Universe Explorer requires it.
-        return element.getValueAsDatetime().date().strftime("%Y%m%d")
+        # blpapi hands back a datetime.date on some SDK builds and a
+        # datetime.datetime on others; normalise both (a bare date has no
+        # .date()).
+        value = element.getValueAsDatetime()
+        if isinstance(value, datetime):
+            value = value.date()
+        return value.strftime("%Y%m%d")
     if datatype == blpapi.DataType.DATETIME or datatype == blpapi.DataType.TIME:
         return element.getValueAsDatetime().isoformat()
     try:

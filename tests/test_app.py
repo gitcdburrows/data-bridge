@@ -305,6 +305,32 @@ def test_parse_historical_tolerates_security_error_without_fielddata():
     assert by_sec["BAD XYZ"]["bars"] == []
 
 
+def test_parse_historical_handles_date_returned_as_plain_date():
+    # Regression: blpapi 3.24.x returns datetime.date (not datetime) for DATE
+    # cells. _element_to_py used .date() (datetime-only) -> AttributeError, so
+    # every bar's date was skipped/nulled. The parser must emit YYYYMMDD.
+    import datetime as dt
+
+    import blpapi
+
+    from app.bloomberg.service import _parse_historical_data
+
+    msg = _FakeEl(children=[
+        _FakeEl("securityData", children=[
+            _FakeEl("security", scalar="IBM US Equity", datatype=blpapi.DataType.STRING),
+            _FakeEl("fieldData", array=[
+                _FakeEl(children=[
+                    _FakeEl("date", scalar=dt.date(2025, 1, 3), datatype=blpapi.DataType.DATE),
+                    _FakeEl("PX_LAST", scalar=2.0, datatype=blpapi.DataType.FLOAT64),
+                ]),
+            ]),
+        ]),
+    ])
+
+    rows = _parse_historical_data([msg])
+    assert rows[0]["bars"] == [{"date": "20250103", "fields": {"PX_LAST": 2.0}}]
+
+
 def test_historical_handler_returns_partial_data(client, monkeypatch):
     rows = [
         {"security": "GOOD US Equity", "security_error": None,
