@@ -143,6 +143,23 @@ default. To override anything, drop a `.env` file next to the executable
 | `APP_PORT` | `8000` | Local server port |
 | `CORS_ORIGINS` | (empty) | EXTRA browser origins to allow (comma separated); the explorer + localhost are always allowed |
 
+## Uninstalling
+
+It's a portable app — there's nothing in Add/Remove Programs. To remove what it
+created (no admin needed), run `scripts/uninstall.ps1` (or double-click
+`scripts/uninstall.bat`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1
+# add -RemoveCert if you self-signed and trusted it
+```
+
+That stops a running instance, removes the **Start on login** entry
+(`HKCU\…\Run\BloombergBridge`), and clears it from *Settings → Apps → Startup*.
+Then delete by hand: `BloombergBridge.exe` (and its `.zip`), `data-bridge.log`
+next to it, and any `.env` you added. (To just drop start-on-login while keeping
+the app, untick **Start on login** in the tray menu.)
+
 ## Building the executable
 
 PyInstaller is **not** a cross-compiler — build on the OS you target. For the
